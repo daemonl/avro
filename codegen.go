@@ -11,7 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"go/format"
+	"reflect"
+	"regexp"
 	"strings"
+	"unicode"
 )
 
 // CodeGenerator is a code generation tool for structs from given Avro schemas.
@@ -236,7 +239,8 @@ func (codegen *CodeGenerator) writeEnumConstants(info *enumSchemaInfo, buffer *b
 
 func (codegen *CodeGenerator) writeImportStatement() error {
 	buffer := codegen.codeSnippets[0]
-	_, err := buffer.WriteString(`import "github.com/elodina/go-avro"`)
+	packageName := reflect.TypeOf(CodeGenerator{}).PkgPath()
+	_, err := buffer.WriteString(fmt.Sprintf(`import "%s"`, packageName))
 	if err != nil {
 		return err
 	}
@@ -280,6 +284,25 @@ func (codegen *CodeGenerator) writeStructDefinition(info *recordSchemaInfo, buff
 	return err
 }
 
+var reFieldSplitChars = regexp.MustCompile(`[_\-]`)
+
+func toGoStructFieldName(anyCase string) string {
+	prev := rune(-1)
+	return strings.Map(
+		func(r rune) rune {
+			if prev < 1 {
+				prev = r
+				return unicode.ToTitle(r)
+			}
+			if r == '_' || r == '-' {
+				r = -1
+			}
+			prev = r
+			return r
+		},
+		anyCase)
+}
+
 func (codegen *CodeGenerator) writeStructField(field *SchemaField, buffer *bytes.Buffer) error {
 	err := codegen.writeDoc("\t", field.Doc, buffer)
 	if err != nil {
@@ -289,12 +312,17 @@ func (codegen *CodeGenerator) writeStructField(field *SchemaField, buffer *bytes
 		return errors.New("Empty field name.")
 	}
 
-	_, err = buffer.WriteString(fmt.Sprintf("\t%s%s ", strings.ToUpper(field.Name[:1]), field.Name[1:]))
+	_, err = buffer.WriteString(toGoStructFieldName(field.Name) + " ")
 	if err != nil {
 		return err
 	}
 
 	err = codegen.writeStructFieldType(field.Type, buffer)
+	if err != nil {
+		return err
+	}
+
+	_, err = buffer.WriteString(fmt.Sprintf("`avro:\"%s\"`", field.Name))
 	if err != nil {
 		return err
 	}
@@ -361,6 +389,7 @@ func (codegen *CodeGenerator) writeStructFieldType(schema Schema, buffer *bytes.
 		_, err = buffer.WriteString("[]byte")
 	case Record:
 		{
+
 			_, err = buffer.WriteString("*")
 			if err != nil {
 				return err
@@ -393,14 +422,24 @@ func (codegen *CodeGenerator) writeStructFieldType(schema Schema, buffer *bytes.
 }
 
 func (codegen *CodeGenerator) writeStructUnionType(schema *UnionSchema, buffer *bytes.Buffer) error {
-	var unionType Schema
-	if schema.Types[0].Type() == Null {
-		unionType = schema.Types[1]
-	} else if schema.Types[1].Type() == Null {
-		unionType = schema.Types[0]
+
+	if len(schema.Types) == 1 {
+		return codegen.writeStructFieldType(schema.Types[0], buffer)
 	}
 
-	if unionType != nil && codegen.isNullable(unionType) {
+	if len(schema.Types) == 2 {
+		var unionType Schema
+		if schema.Types[0].Type() == Null {
+			unionType = schema.Types[1]
+		} else if schema.Types[1].Type() == Null {
+			unionType = schema.Types[0]
+		}
+		if !codegen.isNullable(unionType) {
+			_, err := buffer.WriteString("*")
+			if err != nil {
+				return err
+			}
+		}
 		return codegen.writeStructFieldType(unionType, buffer)
 	}
 
@@ -473,7 +512,7 @@ func (codegen *CodeGenerator) writeStructConstructorFieldValue(info *recordSchem
 		}
 	case *IntSchema:
 		{
-			defaultValue, ok := field.Default.(float64)
+			defaultValue, ok := field.Default.(int32)
 			if !ok {
 				return fmt.Errorf("Invalid default value for %s field of type %s", field.Name, field.Type.GetName())
 			}
@@ -481,7 +520,7 @@ func (codegen *CodeGenerator) writeStructConstructorFieldValue(info *recordSchem
 		}
 	case *LongSchema:
 		{
-			defaultValue, ok := field.Default.(float64)
+			defaultValue, ok := field.Default.(int64)
 			if !ok {
 				return fmt.Errorf("Invalid default value for %s field of type %s", field.Name, field.Type.GetName())
 			}
