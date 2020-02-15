@@ -346,7 +346,7 @@ func (codegen *CodeGenerator) writeStructFieldType(schema Schema, buffer *bytes.
 				return err
 			}
 
-			_, err = buffer.WriteString("*avro.GenericEnum")
+			_, err = buffer.WriteString("*avro.EnumValue")
 			if err != nil {
 				return err
 			}

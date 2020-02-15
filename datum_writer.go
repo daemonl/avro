@@ -126,7 +126,7 @@ func (writer *SpecificDatumWriter) write(v reflect.Value, enc Encoder, s Schema)
 	case Map:
 		return writer.writeMap(v, enc, s)
 	case Enum:
-		return writer.writeEnum(v, enc, s)
+		return writer.writeEnum(v, enc, s.(*EnumSchema))
 	case Union:
 		return writer.writeUnion(v, enc, s)
 	case Fixed:
@@ -145,7 +145,7 @@ func (writer *SpecificDatumWriter) writeBoolean(v reflect.Value, enc Encoder, s 
 		return fmt.Errorf("Invalid boolean value: %v", v.Interface())
 	}
 
-	enc.WriteBoolean(v.Interface().(bool))
+	enc.WriteBoolean(dereference(v).Interface().(bool))
 	return nil
 }
 
@@ -154,7 +154,7 @@ func (writer *SpecificDatumWriter) writeInt(v reflect.Value, enc Encoder, s Sche
 		return fmt.Errorf("Invalid int value: %v", v.Interface())
 	}
 
-	enc.WriteInt(v.Interface().(int32))
+	enc.WriteInt(dereference(v).Interface().(int32))
 	return nil
 }
 
@@ -163,7 +163,7 @@ func (writer *SpecificDatumWriter) writeLong(v reflect.Value, enc Encoder, s Sch
 		return fmt.Errorf("Invalid long value: %v", v.Interface())
 	}
 
-	enc.WriteLong(v.Interface().(int64))
+	enc.WriteLong(dereference(v).Interface().(int64))
 	return nil
 }
 
@@ -172,7 +172,7 @@ func (writer *SpecificDatumWriter) writeFloat(v reflect.Value, enc Encoder, s Sc
 		return fmt.Errorf("Invalid float value: %v", v.Interface())
 	}
 
-	enc.WriteFloat(v.Interface().(float32))
+	enc.WriteFloat(dereference(v).Interface().(float32))
 	return nil
 }
 
@@ -181,7 +181,7 @@ func (writer *SpecificDatumWriter) writeDouble(v reflect.Value, enc Encoder, s S
 		return fmt.Errorf("Invalid double value: %v", v.Interface())
 	}
 
-	enc.WriteDouble(v.Interface().(float64))
+	enc.WriteDouble(dereference(v).Interface().(float64))
 	return nil
 }
 
@@ -190,7 +190,7 @@ func (writer *SpecificDatumWriter) writeBytes(v reflect.Value, enc Encoder, s Sc
 		return fmt.Errorf("Invalid bytes value: %v", v.Interface())
 	}
 
-	enc.WriteBytes(v.Interface().([]byte))
+	enc.WriteBytes(dereference(v).Interface().([]byte))
 	return nil
 }
 
@@ -199,13 +199,16 @@ func (writer *SpecificDatumWriter) writeString(v reflect.Value, enc Encoder, s S
 		return fmt.Errorf("Invalid string value: %v", v.Interface())
 	}
 
-	enc.WriteString(v.Interface().(string))
+	enc.WriteString(dereference(v).Interface().(string))
 	return nil
 }
 
 func (writer *SpecificDatumWriter) writeArray(v reflect.Value, enc Encoder, s Schema) error {
 	if !s.Validate(v) {
 		return fmt.Errorf("Invalid array value: %v", v.Interface())
+	}
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
 	}
 
 	if v.Len() == 0 {
@@ -229,7 +232,9 @@ func (writer *SpecificDatumWriter) writeMap(v reflect.Value, enc Encoder, s Sche
 	if !s.Validate(v) {
 		return fmt.Errorf("Invalid map value: %v", v.Interface())
 	}
-
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
 	if v.Len() == 0 {
 		enc.WriteMapNext(0)
 		return nil
@@ -250,13 +255,20 @@ func (writer *SpecificDatumWriter) writeMap(v reflect.Value, enc Encoder, s Sche
 	return nil
 }
 
-func (writer *SpecificDatumWriter) writeEnum(v reflect.Value, enc Encoder, s Schema) error {
+func (writer *SpecificDatumWriter) writeEnum(v reflect.Value, enc Encoder, s *EnumSchema) error {
+
 	if !s.Validate(v) {
-		return fmt.Errorf("Invalid enum value: %v", v.Interface())
+		return fmt.Errorf("Invalid enum value: %v (SpecificDatumWriter)", v.Interface())
 	}
-
-	enc.WriteInt(v.Interface().(*GenericEnum).GetIndex())
-
+	enum := dereference(v).Interface().(EnumValue)
+	index := enum.index
+	if index == -2 {
+		index = s.IndexOf(enum.unresolved)
+	}
+	if index < 0 || int(index) >= len(s.Symbols) {
+		return fmt.Errorf("Invalid enum index: %v (SpecificDatumWriter)", index)
+	}
+	enc.WriteInt(int32(index))
 	return nil
 }
 
@@ -265,7 +277,7 @@ func (writer *SpecificDatumWriter) writeUnion(v reflect.Value, enc Encoder, s Sc
 	index := unionSchema.GetType(v)
 
 	if unionSchema.Types == nil || index < 0 || index >= len(unionSchema.Types) {
-		return fmt.Errorf("Invalid union value: %v", v.Interface())
+		return fmt.Errorf("Invalid union value: %v (SpecificDatumWriter)", v.Interface())
 	}
 
 	enc.WriteLong(int64(index))
@@ -276,17 +288,17 @@ func (writer *SpecificDatumWriter) writeFixed(v reflect.Value, enc Encoder, s Sc
 	fs := s.(*FixedSchema)
 
 	if !fs.Validate(v) {
-		return fmt.Errorf("Invalid fixed value: %v", v.Interface())
+		return fmt.Errorf("Invalid fixed value: %v (SpecificDatumWriter)", v.Interface())
 	}
 
 	// Write the raw bytes. The length is known by the schema
-	enc.WriteRaw(v.Interface().([]byte))
+	enc.WriteRaw(dereference(v).Interface().([]byte))
 	return nil
 }
 
 func (writer *SpecificDatumWriter) writeRecord(v reflect.Value, enc Encoder, s Schema) error {
 	if !s.Validate(v) {
-		return fmt.Errorf("Encoding Record %s: Invalid record value: %v", s.GetName(), v.Interface())
+		return fmt.Errorf("Encoding Record %s: Invalid record value: %v (SpecificDatumWriter)", s.GetName(), v.Interface())
 	}
 
 	rs := assertRecordSchema(s)
@@ -352,7 +364,7 @@ func (writer *GenericDatumWriter) write(v interface{}, enc Encoder, s Schema) er
 	case Map:
 		return writer.writeMap(v, enc, s)
 	case Enum:
-		return writer.writeEnum(v, enc, s)
+		return writer.writeEnum(v, enc, s.(*EnumSchema))
 	case Union:
 		return writer.writeUnion(v, enc, s)
 	case Fixed:
@@ -370,6 +382,8 @@ func (writer *GenericDatumWriter) writeBoolean(v interface{}, enc Encoder) error
 	switch value := v.(type) {
 	case bool:
 		enc.WriteBoolean(value)
+	case *bool:
+		enc.WriteBoolean(*value)
 	default:
 		return fmt.Errorf("%v is not a boolean", v)
 	}
@@ -381,6 +395,8 @@ func (writer *GenericDatumWriter) writeInt(v interface{}, enc Encoder) error {
 	switch value := v.(type) {
 	case int32:
 		enc.WriteInt(value)
+	case *int32:
+		enc.WriteInt(*value)
 	default:
 		return fmt.Errorf("%v is not an int32", v)
 	}
@@ -392,6 +408,8 @@ func (writer *GenericDatumWriter) writeLong(v interface{}, enc Encoder) error {
 	switch value := v.(type) {
 	case int64:
 		enc.WriteLong(value)
+	case *int64:
+		enc.WriteLong(*value)
 	default:
 		return fmt.Errorf("%v is not an int64", v)
 	}
@@ -403,6 +421,8 @@ func (writer *GenericDatumWriter) writeFloat(v interface{}, enc Encoder) error {
 	switch value := v.(type) {
 	case float32:
 		enc.WriteFloat(value)
+	case *float32:
+		enc.WriteFloat(*value)
 	default:
 		return fmt.Errorf("%v is not a float32", v)
 	}
@@ -414,6 +434,8 @@ func (writer *GenericDatumWriter) writeDouble(v interface{}, enc Encoder) error 
 	switch value := v.(type) {
 	case float64:
 		enc.WriteDouble(value)
+	case *float64:
+		enc.WriteDouble(*value)
 	default:
 		return fmt.Errorf("%v is not a float64", v)
 	}
@@ -425,6 +447,8 @@ func (writer *GenericDatumWriter) writeBytes(v interface{}, enc Encoder) error {
 	switch value := v.(type) {
 	case []byte:
 		enc.WriteBytes(value)
+	case *[]byte:
+		enc.WriteBytes(*value)
 	default:
 		return fmt.Errorf("%v is not a []byte", v)
 	}
@@ -436,6 +460,8 @@ func (writer *GenericDatumWriter) writeString(v interface{}, enc Encoder) error 
 	switch value := v.(type) {
 	case string:
 		enc.WriteString(value)
+	case *string:
+		enc.WriteString(*value)
 	default:
 		return fmt.Errorf("%v is not a string", v)
 	}
@@ -445,6 +471,9 @@ func (writer *GenericDatumWriter) writeString(v interface{}, enc Encoder) error 
 
 func (writer *GenericDatumWriter) writeArray(v interface{}, enc Encoder, s Schema) error {
 	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
 	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
 		return errors.New("Not a slice or array type")
 	}
@@ -469,6 +498,9 @@ func (writer *GenericDatumWriter) writeArray(v interface{}, enc Encoder, s Schem
 
 func (writer *GenericDatumWriter) writeMap(v interface{}, enc Encoder, s Schema) error {
 	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
 	if rv.Kind() != reflect.Map {
 		return errors.New("Not a map type")
 	}
@@ -495,35 +527,25 @@ func (writer *GenericDatumWriter) writeMap(v interface{}, enc Encoder, s Schema)
 	return nil
 }
 
-func (writer *GenericDatumWriter) writeEnum(v interface{}, enc Encoder, s Schema) error {
-	switch v.(type) {
-	case *GenericEnum:
-		{
-			rs := s.(*EnumSchema)
-			for i := range rs.Symbols {
-				if rs.Name == rs.Symbols[i] {
-					err := writer.writeInt(i, enc)
-					if err != nil {
-						return err
-					}
-					break
-				}
-			}
-		}
+func (writer *GenericDatumWriter) writeEnum(v interface{}, enc Encoder, s *EnumSchema) error {
+	var index int32
+	switch value := v.(type) {
+	case *EnumValue:
+			index = value.index
+	case EnumValue:
+			index = value.index
 	case string:
-		{
-			rs := s.(*EnumSchema)
-			for i := range rs.Symbols {
-				if v.(string) == rs.Symbols[i] {
-					enc.WriteInt(int32(i))
-					break
-				}
-			}
-		}
+			index = s.IndexOf(v.(string))
 	default:
-		return fmt.Errorf("%v is not a *GenericEnum", v)
+		return fmt.Errorf("%v is not a *EnumValue", v)
 	}
-
+	if index < 0 || int(index) >= len(s.Symbols) {
+		return fmt.Errorf("Invalid index value %v for enum %v", index, s.GetName())
+	}
+	err := writer.writeInt(index, enc)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -566,9 +588,12 @@ func (writer *GenericDatumWriter) isWritableAs(v interface{}, s Schema) bool {
 	case *MapSchema:
 		return reflect.ValueOf(v).Kind() == reflect.Map
 	case *EnumSchema:
-		_, ok = v.(*GenericEnum)
+		_, ok1 := v.(*EnumValue)
+		_, ok2 := v.(EnumValue)
+		ok = ok1 || ok2
 	case *UnionSchema:
-		panic("Nested unions not supported") //this is a part of spec: http://avro.apache.org/docs/current/spec.html#binary_encode_complex
+		//nested unions are not supported - this is a part of spec: http://avro.apache.org/docs/current/spec.html#binary_encode_complex
+		return false
 	case *RecordSchema:
 		_, ok = v.(*GenericRecord)
 	case *preparedRecordSchema:
@@ -582,11 +607,15 @@ func (writer *GenericDatumWriter) writeFixed(v interface{}, enc Encoder, s Schem
 	fs := s.(*FixedSchema)
 
 	if !fs.Validate(reflect.ValueOf(v)) {
-		return fmt.Errorf("Invalid fixed value: %v", v)
+		return fmt.Errorf("Invalid fixed value: %v (GenericDatumWriter)", v)
+	}
+	switch value := v.(type) {
+	case []byte:
+		enc.WriteRaw(value)
+	case *[]byte:
+		enc.WriteRaw(*value)
 	}
 
-	// Write the raw bytes. The length is known by the schema
-	enc.WriteRaw(v.([]byte))
 	return nil
 }
 

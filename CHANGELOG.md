@@ -1,5 +1,16 @@
 # Changelog
 
+#### Version 0.4 (2019-05-32)
+
+Forked from the original repo and and added full support for Projection
+
+- NewDatumProjector(reader, writer Schema)
+- Added Schema.Generic(datum) for converting from go native values to avro values
+- Added Schema.Fingerprint() [32]byte
+- Existing API Changes:
+    - Pointer fields are interpreted always as optional fields, e.g. *(Type) = Union[Null, Type]
+    - [breaking] GenericEnum is no longer automatically a reference because of the above
+    
 #### Version 0.3 (2017-12-17)
 
 API Changes:

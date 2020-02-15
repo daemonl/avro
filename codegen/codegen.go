@@ -9,11 +9,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/amient/avro"
 	"io/ioutil"
 	"os"
 	"strings"
-
-	"gopkg.in/avro.v0"
 )
 
 type schemas []string

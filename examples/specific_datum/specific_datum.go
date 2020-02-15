@@ -18,7 +18,7 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"gopkg.in/avro.v0"
+	"github.com/amient/avro"
 )
 
 // Define the schema to read

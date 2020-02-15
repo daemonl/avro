@@ -22,9 +22,7 @@ import (
 )
 
 func findField(where reflect.Value, name string) (reflect.Value, error) {
-	if where.Kind() == reflect.Ptr {
-		where = where.Elem()
-	}
+	where = dereference(where)
 	rm := reflectEnsureRi(where.Type())
 	if rf, ok := rm.names[name]; ok {
 		return where.FieldByIndex(rf), nil

@@ -31,16 +31,15 @@ func genericDec(schema Schema) preparedDecoder {
 }
 
 func enumDec(schema *EnumSchema) preparedDecoder {
-	symbolsToIndex := NewGenericEnum(schema.Symbols).symbolsToIndex
+
 	return func(reflectField reflect.Value, dec Decoder) (reflect.Value, error) {
 		enumIndex, err := dec.ReadEnum()
 		if err != nil {
 			return reflect.ValueOf(enumIndex), err
 		}
-		enum := &GenericEnum{
-			Symbols:        schema.Symbols,
-			symbolsToIndex: symbolsToIndex,
-			index:          enumIndex,
+		enum := &EnumValue{
+			schema: schema,
+			index:  enumIndex,
 		}
 		return reflect.ValueOf(enum), nil
 	}

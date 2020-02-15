@@ -67,7 +67,7 @@ func TestPrimitiveBinding(t *testing.T) {
 type Complex struct {
 	StringArray []string
 	LongArray   []int64
-	EnumField   *GenericEnum
+	EnumField   EnumValue
 	MapOfInts   map[string]int32
 	UnionField  string
 	FixedField  []byte
@@ -129,13 +129,13 @@ func TestComplexBinding(t *testing.T) {
 
 			enumValues := []string{"A", "B", "C", "D"}
 			for i := 0; i < len(enumValues); i++ {
-				if enumValues[i] != c.EnumField.Symbols[i] {
-					t.Errorf("Invalid enum value in sequence: expected %v, actual %v", enumValues[i], c.EnumField.Symbols[i])
+				if enumValues[i] != c.EnumField.schema.Symbols[i] {
+					t.Errorf("Invalid enum value in sequence: expected %v, actual %v", enumValues[i], c.EnumField.schema.Symbols[i])
 				}
 			}
 
-			if c.EnumField.Get() != enumValues[2] {
-				t.Errorf("Invalid enum value: expected %v, actual %v", enumValues[2], c.EnumField.Get())
+			if c.EnumField.String() != enumValues[2] {
+				t.Errorf("Invalid enum value: expected %v, actual %v", enumValues[2], c.EnumField.String())
 			}
 
 			if len(c.MapOfInts) != arrayLength {
@@ -178,7 +178,7 @@ type testRecord2 struct {
 
 type testRecord3 struct {
 	StringArray     []string
-	EnumRecordField *GenericEnum
+	EnumRecordField EnumValue
 }
 
 func TestComplexOfComplexBinding(t *testing.T) {
@@ -260,13 +260,13 @@ func TestComplexOfComplexBinding(t *testing.T) {
 
 			enumValues := []string{"A", "B", "C", "D"}
 			for i := 0; i < len(enumValues); i++ {
-				if enumValues[i] != c.NullOrRecordUnion.EnumRecordField.Symbols[i] {
-					t.Errorf("Invalid enum value in sequence: expected %v, actual %v", enumValues[i], c.NullOrRecordUnion.EnumRecordField.Symbols[i])
+				if enumValues[i] != c.NullOrRecordUnion.EnumRecordField.schema.Symbols[i] {
+					t.Errorf("Invalid enum value in sequence: expected %v, actual %v", enumValues[i], c.NullOrRecordUnion.EnumRecordField.schema.Symbols[i])
 				}
 			}
 
-			if c.NullOrRecordUnion.EnumRecordField.Get() != enumValues[3] {
-				t.Errorf("Invalid enum value: expected %v, actual %v", enumValues[3], c.NullOrRecordUnion.EnumRecordField.Get())
+			if c.NullOrRecordUnion.EnumRecordField.String() != enumValues[3] {
+				t.Errorf("Invalid enum value: expected %v, actual %v", enumValues[3], c.NullOrRecordUnion.EnumRecordField.String())
 			}
 		}
 	}
@@ -617,7 +617,7 @@ func enumRaceTest(t *testing.T, schemas []Schema) {
 
 func TestEnumNegativeRegression(t *testing.T) {
 	var playingCard struct {
-		Type *GenericEnum
+		Type *EnumValue
 	}
 	var genericDest = NewGenericRecord(schemaEnumA)
 	reader := NewDatumReader(schemaEnumA)
@@ -638,7 +638,7 @@ func TestEnumNegativeRegression(t *testing.T) {
 
 	buf = []byte{0x78} // This is the encoding of the varint 60
 	err = reader.Read(genericDest, NewBinaryDecoder(buf))
-	assert(t, err.Error(), "Enum index invalid!")
+	assert(t, err.Error(), "Enum index invalid! 60 from: [HEART SPADE CLUB]")
 
 	playingCard.Type = nil
 	err = reader.Read(&playingCard, NewBinaryDecoder(buf))
@@ -710,7 +710,7 @@ func specificReaderComplexVal() (Schema, []byte) {
 	if err != nil {
 		panic(err)
 	}
-	e := NewGenericEnum([]string{"A", "B", "C", "D"})
+	e, _ := NewEnumValue("A", &EnumSchema{Symbols: []string{"A", "B", "C", "D"}})
 	e.Set("A")
 	c := newComplex()
 	c.EnumField.Set("A")

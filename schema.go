@@ -1,12 +1,16 @@
 package avro
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 // ***********************
@@ -14,6 +18,17 @@ import (
 // https://github.com/go-avro/avro. This notice is required to be here due to the
 // terms of the Apache license, see LICENSE for details.
 // ***********************
+
+type Fingerprint [32]byte
+
+func (f *Fingerprint) Equal(other *Fingerprint) bool {
+	for i, b := range f {
+		if other[i] != b {
+			return false
+		}
+	}
+	return true
+}
 
 const (
 	// Record schema type constant
@@ -108,16 +123,52 @@ type Schema interface {
 	// Converts this schema to its JSON representation.
 	String() string
 
+	// Converts go runtime datum into a value acceptable by this schema
+	Generic(datum interface{}) (interface{}, error)
+
 	// Checks whether the given value is writeable to this schema.
 	Validate(v reflect.Value) bool
+
+	// Canonical Schema
+	Canonical() (*CanonicalSchema, error)
+
+	// Returns a pre-computed or cached fingerprint
+	Fingerprint() (*Fingerprint, error)
+
+	// Returns representation considering whether the same type was already declared
+	withRegistry(registry map[string]Schema) Schema
 }
 
 // StringSchema implements Schema and represents Avro string type.
 type StringSchema struct{}
 
+// Returns representation considering whether the same type was already declared
+func (s *StringSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
+// Returns a pre-computed or cached fingerprint
+func (*StringSchema) Fingerprint() (*Fingerprint, error) {
+	return &Fingerprint{
+		233, 229, 193, 201, 228, 246, 39, 115, 57, 209, 188, 222, 7, 51, 165, 155,
+		212, 47, 135, 49, 244, 73, 218, 109, 193, 48, 16, 169, 22, 147, 13, 72,
+	}, nil
+}
+
 // Returns a JSON representation of StringSchema.
 func (*StringSchema) String() string {
 	return `{"type": "string"}`
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (*StringSchema) Generic(datum interface{}) (interface{}, error) {
+	if value, ok := datum.(string); ok {
+		return value, nil
+	} else if value, ok := datum.(fmt.Stringer); ok {
+		return value.String(), nil
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a string value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this StringSchema.
@@ -141,7 +192,12 @@ func (*StringSchema) Validate(v reflect.Value) bool {
 	return ok
 }
 
-// MarshalJSON serializes the given schema as JSON. Never returns an error.
+// Canonical Schema
+func (s *StringSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Type: "string"}, nil
+}
+
+// Standard JSON representation
 func (*StringSchema) MarshalJSON() ([]byte, error) {
 	return []byte(`"string"`), nil
 }
@@ -149,9 +205,35 @@ func (*StringSchema) MarshalJSON() ([]byte, error) {
 // BytesSchema implements Schema and represents Avro bytes type.
 type BytesSchema struct{}
 
+// Returns a pre-computed or cached fingerprint
+func (*BytesSchema) Fingerprint() (*Fingerprint, error) {
+	return &Fingerprint{
+		154, 229, 7, 169, 221, 57, 238, 91, 124, 126, 40, 93, 162, 192, 132, 101,
+		33, 200, 174, 141, 128, 254, 234, 229, 80, 78, 12, 152, 29, 83, 245, 250,
+	}, nil
+}
+
+// Returns representation considering whether the same type was already declared
+func (s *BytesSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
 // String returns a JSON representation of BytesSchema.
 func (*BytesSchema) String() string {
 	return `{"type": "bytes"}`
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *BytesSchema) Generic(datum interface{}) (interface{}, error) {
+	if value, ok := datum.([]byte); ok {
+		return value, nil
+	} else if value, ok := datum.(string); ok {
+		return []byte(value), nil
+	} else if value, ok := datum.(fmt.Stringer); ok {
+		return s.Generic(value.String())
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a bytes value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this BytesSchema.
@@ -176,7 +258,12 @@ func (*BytesSchema) Validate(v reflect.Value) bool {
 	return v.Kind() == reflect.Slice && v.Type().Elem().Kind() == reflect.Uint8
 }
 
-// MarshalJSON serializes the given schema as JSON. Never returns an error.
+// Canonical Schema
+func (s *BytesSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Type: "bytes"}, nil
+}
+
+// Standard JSON representation
 func (*BytesSchema) MarshalJSON() ([]byte, error) {
 	return []byte(`"bytes"`), nil
 }
@@ -184,9 +271,51 @@ func (*BytesSchema) MarshalJSON() ([]byte, error) {
 // IntSchema implements Schema and represents Avro int type.
 type IntSchema struct{}
 
+// Returns representation considering whether the same type was already declared
+func (s *IntSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
+// Returns a pre-computed or cached fingerprint
+func (*IntSchema) Fingerprint() (*Fingerprint, error) {
+	return &Fingerprint{
+		63, 43, 135, 169, 254, 124, 201, 177, 56, 53, 89, 140, 57, 129, 205, 69,
+		227, 227, 85, 48, 158, 80, 144, 170, 9, 51, 215, 190, 203, 111, 186, 69,
+	}, nil
+}
+
 // String returns a JSON representation of IntSchema.
 func (*IntSchema) String() string {
 	return `{"type": "int"}`
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *IntSchema) Generic(datum interface{}) (interface{}, error) {
+	if value, ok := datum.(int32); ok {
+		return int32(value), nil
+	} else if value, ok := datum.(int); ok {
+		return int32(value), nil
+	} else if value, ok := datum.(int16); ok {
+		return int32(value), nil
+	} else if value, ok := datum.(int8); ok {
+		return int32(value), nil
+	} else if value, ok := datum.(uint32); ok {
+		return int32(value), nil
+	} else if value, ok := datum.(uint16); ok {
+		return int32(value), nil
+	} else if value, ok := datum.(uint8); ok {
+		return int32(value), nil
+	} else if value, ok := datum.(string); ok {
+		if i, err := strconv.Atoi(value); err != nil {
+			return nil, err
+		} else {
+			return int32(i), nil
+		}
+	} else if value, ok := datum.(fmt.Stringer); ok {
+		return s.Generic(value.String())
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to an int value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this IntSchema.
@@ -209,7 +338,12 @@ func (*IntSchema) Validate(v reflect.Value) bool {
 	return reflect.TypeOf(dereference(v).Interface()).Kind() == reflect.Int32
 }
 
-// MarshalJSON serializes the given schema as JSON. Never returns an error.
+// Canonical Schema
+func (s *IntSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Type: "int"}, nil
+}
+
+// Standard JSON representation
 func (*IntSchema) MarshalJSON() ([]byte, error) {
 	return []byte(`"int"`), nil
 }
@@ -217,9 +351,59 @@ func (*IntSchema) MarshalJSON() ([]byte, error) {
 // LongSchema implements Schema and represents Avro long type.
 type LongSchema struct{}
 
+// Returns representation considering whether the same type was already declared
+func (s *LongSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
+// Returns a pre-computed or cached fingerprint
+func (*LongSchema) Fingerprint() (*Fingerprint, error) {
+	return &Fingerprint{
+		195, 44, 73, 125, 246, 115, 12, 151, 250, 7, 54, 42, 165, 2, 63, 55,
+		212, 154, 2, 126, 196, 82, 54, 7, 120, 17, 76, 244, 39, 150, 90, 221,
+	}, nil
+}
+
 // Returns a JSON representation of LongSchema.
 func (*LongSchema) String() string {
 	return `{"type": "long"}`
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *LongSchema) Generic(datum interface{}) (interface{}, error) {
+	if value, ok := datum.(int64); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(float64); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(float32); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(int); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(int32); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(int16); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(int8); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(uint64); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(uint32); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(uint16); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(uint8); ok {
+		return int64(value), nil
+	} else if value, ok := datum.(string); ok {
+		if i, err := strconv.Atoi(value); err != nil {
+			return nil, err
+		} else {
+			return int64(i), nil
+		}
+	} else if value, ok := datum.(fmt.Stringer); ok {
+		return s.Generic(value.String())
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a long value: %v from type %v", datum, reflect.TypeOf(datum))
+	}
 }
 
 // Type returns a type constant for this LongSchema.
@@ -242,7 +426,12 @@ func (*LongSchema) Validate(v reflect.Value) bool {
 	return reflect.TypeOf(dereference(v).Interface()).Kind() == reflect.Int64
 }
 
-// MarshalJSON serializes the given schema as JSON. Never returns an error.
+// Canonical Schema
+func (s *LongSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Type: "long"}, nil
+}
+
+// Standard JSON representation
 func (*LongSchema) MarshalJSON() ([]byte, error) {
 	return []byte(`"long"`), nil
 }
@@ -250,9 +439,49 @@ func (*LongSchema) MarshalJSON() ([]byte, error) {
 // FloatSchema implements Schema and represents Avro float type.
 type FloatSchema struct{}
 
+// Returns representation considering whether the same type was already declared
+func (s *FloatSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
+// Returns a pre-computed or cached fingerprint
+func (*FloatSchema) Fingerprint() (*Fingerprint, error) {
+	return &Fingerprint{
+		30, 113, 249, 236, 5, 29, 102, 63, 86, 176, 216, 225, 252, 132, 215, 26,
+		165, 108, 207, 233, 250, 147, 170, 32, 209, 5, 71, 167, 171, 235, 92, 192,
+	}, nil
+}
+
 // String returns a JSON representation of FloatSchema.
 func (*FloatSchema) String() string {
 	return `{"type": "float"}`
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *FloatSchema) Generic(datum interface{}) (interface{}, error) {
+	if value, ok := datum.(float32); ok {
+		return float32(value), nil
+	} else if value, ok := datum.(int); ok {
+		return float32(value), nil
+	} else if value, ok := datum.(int32); ok {
+		return float32(value), nil
+	} else if value, ok := datum.(int16); ok {
+		return float32(value), nil
+	} else if value, ok := datum.(int8); ok {
+		return float32(value), nil
+	} else if value, ok := datum.(uint32); ok {
+		return float32(value), nil
+	} else if value, ok := datum.(uint16); ok {
+		return float32(value), nil
+	} else if value, ok := datum.(uint8); ok {
+		return float32(value), nil
+	} else if value, ok := datum.(string); ok {
+		return strconv.ParseFloat(value, 32)
+	} else if value, ok := datum.(fmt.Stringer); ok {
+		return s.Generic(value.String())
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a float value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this FloatSchema.
@@ -275,7 +504,12 @@ func (*FloatSchema) Validate(v reflect.Value) bool {
 	return reflect.TypeOf(dereference(v).Interface()).Kind() == reflect.Float32
 }
 
-// MarshalJSON serializes the given schema as JSON. Never returns an error.
+// Canonical Schema
+func (s *FloatSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Type: "float"}, nil
+}
+
+// Standard JSON representation
 func (*FloatSchema) MarshalJSON() ([]byte, error) {
 	return []byte(`"float"`), nil
 }
@@ -283,9 +517,55 @@ func (*FloatSchema) MarshalJSON() ([]byte, error) {
 // DoubleSchema implements Schema and represents Avro double type.
 type DoubleSchema struct{}
 
+// Returns representation considering whether the same type was already declared
+func (s *DoubleSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
+// Returns a pre-computed or cached fingerprint
+func (*DoubleSchema) Fingerprint() (*Fingerprint, error) {
+	return &Fingerprint{
+		115, 10, 154, 140, 97, 22, 129, 215, 238, 244, 66, 224, 60, 22, 199, 13,
+		19, 188, 163, 235, 139, 151, 123, 180, 3, 234, 255, 82, 23, 106, 242, 84,
+	}, nil
+}
+
 // Returns a JSON representation of DoubleSchema.
 func (*DoubleSchema) String() string {
 	return `{"type": "double"}`
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *DoubleSchema) Generic(datum interface{}) (interface{}, error) {
+	if value, ok := datum.(float64); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(float32); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(int64); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(int); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(int32); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(int16); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(int8); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(uint64); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(uint32); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(uint16); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(uint8); ok {
+		return float64(value), nil
+	} else if value, ok := datum.(string); ok {
+		return strconv.ParseFloat(value, 64)
+	} else if value, ok := datum.(fmt.Stringer); ok {
+		return s.Generic(value.String())
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a double value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this DoubleSchema.
@@ -308,7 +588,12 @@ func (*DoubleSchema) Validate(v reflect.Value) bool {
 	return reflect.TypeOf(dereference(v).Interface()).Kind() == reflect.Float64
 }
 
-// MarshalJSON serializes the given schema as JSON. Never returns an error.
+// Canonical Schema
+func (s *DoubleSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Type: "double"}, nil
+}
+
+// Standard JSON representation
 func (*DoubleSchema) MarshalJSON() ([]byte, error) {
 	return []byte(`"double"`), nil
 }
@@ -316,9 +601,47 @@ func (*DoubleSchema) MarshalJSON() ([]byte, error) {
 // BooleanSchema implements Schema and represents Avro boolean type.
 type BooleanSchema struct{}
 
+// Returns representation considering whether the same type was already declared
+func (s *BooleanSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
+// Returns a pre-computed or cached fingerprint
+func (*BooleanSchema) Fingerprint() (*Fingerprint, error) {
+	return &Fingerprint{
+		165, 176, 49, 171, 98, 188, 65, 109, 114, 12, 4, 16, 216, 2, 234, 70,
+		185, 16, 196, 251, 232, 92, 80, 169, 70, 204, 198, 88, 183, 78, 103, 126,
+	}, nil
+}
+
 // String returns a JSON representation of BooleanSchema.
 func (*BooleanSchema) String() string {
 	return `{"type": "boolean"}`
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *BooleanSchema) Generic(datum interface{}) (interface{}, error) {
+	if value, ok := datum.(bool); ok {
+		return value, nil
+	} else if value, ok := datum.(int); ok && value > 0 {
+		return true, nil
+	} else if value, ok := datum.(int); ok && value <= 0 {
+		return false, nil
+	} else if value, ok := datum.(float32); ok && value > 0 {
+		return true, nil
+	} else if value, ok := datum.(float32); ok && value <= 0 {
+		return false, nil
+	} else if value, ok := datum.(float64); ok && value > 0 {
+		return true, nil
+	} else if value, ok := datum.(float64); ok && value <= 0 {
+		return false, nil
+	} else if value, ok := datum.(string); ok {
+		return strconv.ParseBool(value)
+	} else if value, ok := datum.(fmt.Stringer); ok {
+		return s.Generic(value.String())
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a bool value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this BooleanSchema.
@@ -341,7 +664,12 @@ func (*BooleanSchema) Validate(v reflect.Value) bool {
 	return reflect.TypeOf(dereference(v).Interface()).Kind() == reflect.Bool
 }
 
-// MarshalJSON serializes the given schema as JSON. Never returns an error.
+// Canonical Schema
+func (s *BooleanSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Type: "boolean"}, nil
+}
+
+// Standard JSON representation
 func (*BooleanSchema) MarshalJSON() ([]byte, error) {
 	return []byte(`"boolean"`), nil
 }
@@ -349,9 +677,31 @@ func (*BooleanSchema) MarshalJSON() ([]byte, error) {
 // NullSchema implements Schema and represents Avro null type.
 type NullSchema struct{}
 
+// Returns representation considering whether the same type was already declared
+func (s *NullSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
+// Returns a pre-computed or cached fingerprint
+func (*NullSchema) Fingerprint() (*Fingerprint, error) {
+	return &Fingerprint{
+		240, 114, 203, 236, 59, 248, 132, 24, 113, 212, 40, 66, 48, 197, 233, 131,
+		220, 33, 26, 86, 131, 122, 237, 134, 36, 135, 20, 143, 148, 125, 26, 31,
+	}, nil
+}
+
 // String returns a JSON representation of NullSchema.
 func (*NullSchema) String() string {
 	return `{"type": "null"}`
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *NullSchema) Generic(datum interface{}) (interface{}, error) {
+	if datum == nil {
+		return nil, nil
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a null value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this NullSchema.
@@ -399,19 +749,62 @@ func (*NullSchema) Validate(v reflect.Value) bool {
 	return false
 }
 
-// MarshalJSON serializes the given schema as JSON. Never returns an error.
+// Canonical Schema
+func (s *NullSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Type: "null"}, nil
+}
+
+// Standard JSON representation
 func (*NullSchema) MarshalJSON() ([]byte, error) {
 	return []byte(`"null"`), nil
 }
 
 // RecordSchema implements Schema and represents Avro record type.
 type RecordSchema struct {
-	Name       string   `json:"name,omitempty"`
-	Namespace  string   `json:"namespace,omitempty"`
-	Doc        string   `json:"doc,omitempty"`
-	Aliases    []string `json:"aliases,omitempty"`
-	Properties map[string]interface{}
-	Fields     []*SchemaField `json:"fields"`
+	Name        string   `json:"name,omitempty"`
+	Namespace   string   `json:"namespace,omitempty"`
+	Doc         string   `json:"doc,omitempty"`
+	Aliases     []string `json:"aliases,omitempty"`
+	Properties  map[string]interface{}
+	Fields      []*SchemaField `json:"fields"`
+	fingerprint *Fingerprint
+}
+
+// Returns representation considering whether the same type was already declared
+func (s *RecordSchema) withRegistry(registry map[string]Schema) Schema {
+	fullname := GetFullName(s)
+	if schema, ok := registry[fullname]; ok {
+		return &refSchema{Type_: fullname, Ref: schema}
+	} else {
+		//turn all repeated type declaration into references
+		fields := make([]*SchemaField, len(s.Fields))
+		for i, f := range s.Fields {
+			fields[i] = f.withRegistry(registry)
+		}
+		schema = &RecordSchema{
+			Name:        s.Name,
+			Namespace:   s.Namespace,
+			Doc:         s.Doc,
+			Aliases:     s.Aliases,
+			Properties:  s.Properties,
+			Fields:      fields,
+			fingerprint: s.fingerprint,
+		}
+		registry[fullname] = schema
+		return schema
+	}
+}
+
+// Returns a pre-computed or cached fingerprint
+func (s *RecordSchema) Fingerprint() (*Fingerprint, error) {
+	if s.fingerprint == nil {
+		if f, err := calculateSchemaFingerprint(s); err != nil {
+			return nil, err
+		} else {
+			s.fingerprint = f
+		}
+	}
+	return s.fingerprint, nil
 }
 
 // String returns a JSON representation of RecordSchema.
@@ -424,8 +817,58 @@ func (s *RecordSchema) String() string {
 	return string(bytes)
 }
 
+type FieldPair struct {
+	Index int
+	Name  string
+}
+
+type FieldPairs []FieldPair
+
+func (p FieldPairs) Len() int {
+	return len(p)
+}
+func (p FieldPairs) Less(a, b int) bool {
+	return p[a].Name < p[b].Name
+}
+func (p FieldPairs) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
+
+// Canonical Schema
+func (s *RecordSchema) Canonical() (*CanonicalSchema, error) {
+	fields := make([]*CanonicalSchemaField, len(s.Fields))
+	pairs := make(FieldPairs, len(s.Fields))
+	for i, f := range s.Fields {
+		pairs[i] = FieldPair{i, f.Name}
+	}
+	sort.Sort(pairs)
+
+	i := 0
+	for _, pair := range pairs {
+		if fc, err := s.Fields[pair.Index].Type.Canonical(); err != nil {
+			return nil, err
+		} else {
+			fields[i] = &CanonicalSchemaField{
+				Name: pair.Name,
+				Type: fc,
+			}
+			i += 1
+		}
+	}
+	return &CanonicalSchema{Type: "record", Name: GetFullName(s), Fields: fields}, nil
+}
+
 // MarshalJSON serializes the given schema as JSON.
 func (s *RecordSchema) MarshalJSON() ([]byte, error) {
+	return s.MarshalJSONWithRegistry(make(map[string]Schema))
+}
+
+func (s *RecordSchema) MarshalJSONWithRegistry(registry map[string]Schema) ([]byte, error) {
+	//turn all repeated type declaration into references
+	fields := make([]*SchemaField, len(s.Fields))
+	for i, f := range s.Fields {
+		fields[i] = f.withRegistry(registry)
+	}
 	return json.Marshal(struct {
 		Type      string         `json:"type,omitempty"`
 		Namespace string         `json:"namespace,omitempty"`
@@ -439,7 +882,7 @@ func (s *RecordSchema) MarshalJSON() ([]byte, error) {
 		Name:      s.Name,
 		Doc:       s.Doc,
 		Aliases:   s.Aliases,
-		Fields:    s.Fields,
+		Fields:    fields,
 	})
 }
 
@@ -451,6 +894,55 @@ func (*RecordSchema) Type() int {
 // GetName returns a record name for this RecordSchema.
 func (s *RecordSchema) GetName() string {
 	return s.Name
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *RecordSchema) Generic(datum interface{}) (interface{}, error) {
+
+	if rec, ok := datum.(*GenericRecord); ok {
+		return rec, nil
+	} else if rec, ok := datum.(GenericRecord); ok {
+		return &rec, nil
+	} else {
+		dict := make(map[string]interface{})
+		for _, field := range s.Fields {
+			if stringMap, ok := datum.(map[string]interface{}); ok {
+				if v, ok := stringMap[field.Name]; ok {
+					if val, err := field.Type.Generic(v); err != nil {
+						return nil, err
+					} else {
+						dict[field.Name] = val
+					}
+					continue
+				}
+			} else if genericMap, ok := datum.(map[interface{}]interface{}); ok {
+				if v, ok := genericMap[field.Name]; ok {
+					if val, err := field.Type.Generic(v); err != nil {
+						return nil, err
+					} else {
+						dict[field.Name] = val
+					}
+					continue
+				}
+			} else {
+				return nil, fmt.Errorf("don't know how to convert datum to a generic record: %v", datum)
+			}
+			if val, err := field.Type.Generic(field.Default); err == nil {
+				dict[field.Name] = val
+			} else {
+				return nil, fmt.Errorf("field doesn't have a valid default and is missing: %v", field.Name)
+			}
+		}
+		rec := NewGenericRecord(s)
+		rec.fields = dict
+		return rec, nil
+	}
+
+	if datum == nil {
+		return nil, nil
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a generic record: %v", datum)
+	}
 }
 
 // Prop gets a custom non-reserved property from this schema and a bool representing if it exists.
@@ -507,6 +999,16 @@ type RecursiveSchema struct {
 	Actual *RecordSchema
 }
 
+// Returns representation considering whether the same type was already declared
+func (s *RecursiveSchema) withRegistry(registry map[string]Schema) Schema {
+	return s.Actual.withRegistry(registry)
+}
+
+// Returns a pre-computed or cached fingerprint
+func (s *RecursiveSchema) Fingerprint() (*Fingerprint, error) {
+	return s.Actual.Fingerprint()
+}
+
 func newRecursiveSchema(parent *RecordSchema) *RecursiveSchema {
 	return &RecursiveSchema{
 		Actual: parent,
@@ -516,6 +1018,11 @@ func newRecursiveSchema(parent *RecordSchema) *RecursiveSchema {
 // String returns a JSON representation of RecursiveSchema.
 func (s *RecursiveSchema) String() string {
 	return fmt.Sprintf(`{"type": "%s"}`, s.Actual.GetName())
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *RecursiveSchema) Generic(datum interface{}) (interface{}, error) {
+	return s.Actual.Generic(datum)
 }
 
 // Type returns a type constant for this RecursiveSchema.
@@ -538,6 +1045,11 @@ func (s *RecursiveSchema) Validate(v reflect.Value) bool {
 	return s.Actual.Validate(v)
 }
 
+// Canonical JSON representation
+func (s *RecursiveSchema) Canonical() (*CanonicalSchema, error) {
+	return s.Actual.Canonical()
+}
+
 // MarshalJSON serializes the given schema as JSON. Never returns an error.
 func (s *RecursiveSchema) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, s.Actual.GetName())), nil
@@ -549,13 +1061,26 @@ type SchemaField struct {
 	Doc        string      `json:"doc,omitempty"`
 	Default    interface{} `json:"default"`
 	Type       Schema      `json:"type,omitempty"`
+	Aliases    []string    `json:"aliases,omitempty"`
 	Properties map[string]interface{}
 }
 
+// Returns representation considering whether the same type was already declared
+func (s *SchemaField) withRegistry(registry map[string]Schema) *SchemaField {
+	return &SchemaField{
+		Name:       s.Name,
+		Aliases:    s.Aliases,
+		Default:    s.Default,
+		Doc:        s.Doc,
+		Properties: s.Properties,
+		Type:       s.Type.withRegistry(registry),
+	}
+}
+
 // Gets a custom non-reserved property from this schemafield and a bool representing if it exists.
-func (this *SchemaField) Prop(key string) (interface{}, bool) {
-	if this.Properties != nil {
-		if prop, ok := this.Properties[key]; ok {
+func (s *SchemaField) Prop(key string) (interface{}, bool) {
+	if s.Properties != nil {
+		if prop, ok := s.Properties[key]; ok {
 			return prop, true
 		}
 	}
@@ -570,11 +1095,13 @@ func (s *SchemaField) MarshalJSON() ([]byte, error) {
 			Doc     string      `json:"doc,omitempty"`
 			Default interface{} `json:"default"`
 			Type    Schema      `json:"type,omitempty"`
+			Aliases []string    `json:"aliases,omitempty"`
 		}{
 			Name:    s.Name,
 			Doc:     s.Doc,
 			Default: s.Default,
 			Type:    s.Type,
+			Aliases: s.Aliases,
 		})
 	}
 
@@ -583,11 +1110,13 @@ func (s *SchemaField) MarshalJSON() ([]byte, error) {
 		Doc     string      `json:"doc,omitempty"`
 		Default interface{} `json:"default,omitempty"`
 		Type    Schema      `json:"type,omitempty"`
+		Aliases []string    `json:"aliases,omitempty"`
 	}{
 		Name:    s.Name,
 		Doc:     s.Doc,
 		Default: s.Default,
 		Type:    s.Type,
+		Aliases: s.Aliases,
 	})
 }
 
@@ -598,12 +1127,37 @@ func (s *SchemaField) String() string {
 
 // EnumSchema implements Schema and represents Avro enum type.
 type EnumSchema struct {
-	Name       string
-	Namespace  string
-	Aliases    []string
-	Doc        string
-	Symbols    []string
-	Properties map[string]interface{}
+	Name           string
+	Namespace      string
+	Aliases        []string
+	Doc            string
+	Symbols        []string
+	Properties     map[string]interface{}
+	symbolsToIndex map[string]int32
+	fingerprint    *Fingerprint
+}
+
+// Returns representation considering whether the same type was already declared
+func (s *EnumSchema) withRegistry(registry map[string]Schema) Schema {
+	fullname := GetFullName(s)
+	if schema, ok := registry[fullname]; ok {
+		return &refSchema{Type_: fullname, Ref: schema}
+	} else {
+		registry[fullname] = s
+		return s
+	}
+}
+
+// Returns a pre-computed or cached fingerprint
+func (s *EnumSchema) Fingerprint() (*Fingerprint, error) {
+	if s.fingerprint == nil {
+		if f, err := calculateSchemaFingerprint(s); err != nil {
+			return nil, err
+		} else {
+			s.fingerprint = f
+		}
+	}
+	return s.fingerprint, nil
 }
 
 // String returns a JSON representation of EnumSchema.
@@ -614,6 +1168,67 @@ func (s *EnumSchema) String() string {
 	}
 
 	return string(bytes)
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *EnumSchema) Generic(datum interface{}) (interface{}, error) {
+	contains := func(symbol string) bool {
+		for _, _symbol := range s.Symbols {
+			if _symbol == symbol {
+				return true
+			}
+		}
+		return false
+	}
+	if e, ok := datum.(*EnumValue); ok {
+		return *e, nil
+	} else if e, ok := datum.(EnumValue); ok {
+		return e, nil
+	} else if symbol, ok := datum.(string); ok && contains(symbol) {
+		if e, err := NewEnumValue(symbol, s); err != nil {
+			return nil, err
+		} else {
+			return *e, nil
+		}
+	} else if index, ok := datum.(int32); ok && index >= 0 && int(index) < len(s.Symbols) {
+		if e, err := NewEnumValue(s.Symbols[index], s); err != nil {
+			return nil, err
+		} else {
+			return *e, nil
+		}
+	} else if index, ok := datum.(int); ok && index >= 0 && index < len(s.Symbols) {
+		if e, err := NewEnumValue(s.Symbols[int32(index)], s); err != nil {
+			return nil, err
+		} else {
+			return *e, nil
+		}
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to an enum value: %v", datum)
+	}
+}
+
+var symbolsToIndexCache = make(map[[32]byte]map[string]int32)
+var symbolsToIndexCacheLock sync.Mutex
+
+// Type returns a type constant for this EnumSchema.
+func (s *EnumSchema) IndexOf(symbol string) int32 {
+	if s.symbolsToIndex == nil {
+		f, _ := s.Fingerprint()
+		symbolsToIndexCacheLock.Lock()
+		if s.symbolsToIndex = symbolsToIndexCache[*f]; s.symbolsToIndex == nil {
+			s.symbolsToIndex = make(map[string]int32)
+			for i, symbol := range s.Symbols {
+				s.symbolsToIndex[symbol] = int32(i)
+			}
+			symbolsToIndexCache[*f] = s.symbolsToIndex
+		}
+		symbolsToIndexCacheLock.Unlock()
+	}
+	if index, ok := s.symbolsToIndex[symbol]; ok {
+		return index
+	} else {
+		return -1
+	}
 }
 
 // Type returns a type constant for this EnumSchema.
@@ -638,9 +1253,17 @@ func (s *EnumSchema) Prop(key string) (interface{}, bool) {
 }
 
 // Validate checks whether the given value is writeable to this schema.
-func (*EnumSchema) Validate(v reflect.Value) bool {
-	//TODO implement
-	return true
+func (s *EnumSchema) Validate(v reflect.Value) bool {
+	if _, ok := dereference(v).Interface().(EnumValue); ok {
+		return true
+	} else {
+		return false
+	}
+}
+
+// Canonical representation
+func (s *EnumSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{Name: GetFullName(s), Type: "enum", Symbols: s.Symbols}, nil
 }
 
 // MarshalJSON serializes the given schema as JSON.
@@ -660,10 +1283,40 @@ func (s *EnumSchema) MarshalJSON() ([]byte, error) {
 	})
 }
 
+func (s *EnumSchema) Value(symbol string) (EnumValue, error) {
+	if enum, err := NewEnumValue(symbol, s); err != nil {
+		return EnumValue{}, err
+	} else {
+		return *enum, nil
+	}
+}
+
 // ArraySchema implements Schema and represents Avro array type.
 type ArraySchema struct {
-	Items      Schema
-	Properties map[string]interface{}
+	Items       Schema
+	Properties  map[string]interface{}
+	fingerprint *Fingerprint
+}
+
+// Returns representation considering whether the same type was already declared
+func (s *ArraySchema) withRegistry(registry map[string]Schema) Schema {
+	return &ArraySchema{
+		Items:       s.Items.withRegistry(registry),
+		Properties:  s.Properties,
+		fingerprint: s.fingerprint,
+	}
+}
+
+// Returns a pre-computed or cached fingerprint
+func (s *ArraySchema) Fingerprint() (*Fingerprint, error) {
+	if s.fingerprint == nil {
+		if f, err := calculateSchemaFingerprint(s); err != nil {
+			return nil, err
+		} else {
+			s.fingerprint = f
+		}
+	}
+	return s.fingerprint, nil
 }
 
 // String returns a JSON representation of ArraySchema.
@@ -674,6 +1327,96 @@ func (s *ArraySchema) String() string {
 	}
 
 	return string(bytes)
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *ArraySchema) Generic(datum interface{}) (interface{}, error) {
+	if a, ok := datum.([]interface{}); ok {
+		if s.Items.Type() == String {
+			slice := make([]string, len(a))
+			for i, v := range a {
+				if val, err := s.Items.Generic(v); err != nil {
+					return nil, err
+				} else {
+					slice[i] = val.(string)
+				}
+			}
+			return slice, nil
+		} else if s.Items.Type() == Double {
+			slice := make([]float64, len(a))
+			for i, v := range a {
+				if val, err := s.Items.Generic(v); err != nil {
+					return nil, err
+				} else {
+					slice[i] = val.(float64)
+				}
+			}
+			return slice, nil
+		} else if s.Items.Type() == Float {
+			slice := make([]float32, len(a))
+			for i, v := range a {
+				if val, err := s.Items.Generic(v); err != nil {
+					return nil, err
+				} else {
+					slice[i] = val.(float32)
+				}
+			}
+			return slice, nil
+		} else if s.Items.Type() == Long {
+			slice := make([]int64, len(a))
+			for i, v := range a {
+				if val, err := s.Items.Generic(v); err != nil {
+					return nil, err
+				} else {
+					slice[i] = val.(int64)
+				}
+			}
+			return slice, nil
+		} else if s.Items.Type() == Int {
+			slice := make([]int32, len(a))
+			for i, v := range a {
+				if val, err := s.Items.Generic(v); err != nil {
+					return nil, err
+				} else {
+					slice[i] = val.(int32)
+				}
+			}
+			return slice, nil
+		} else if s.Items.Type() == Boolean {
+			slice := make([]bool, len(a))
+			for i, v := range a {
+				if val, err := s.Items.Generic(v); err != nil {
+					return nil, err
+				} else {
+					slice[i] = val.(bool)
+				}
+			}
+			return slice, nil
+		} else if s.Items.Type() == Bytes || s.Items.Type() == Fixed {
+			slice := make([][]byte, len(a))
+			for i, v := range a {
+				if val, err := s.Items.Generic(v); err != nil {
+					return nil, err
+				} else {
+					slice[i] = val.([]byte)
+				}
+			}
+			return slice, nil
+		} else {
+			slice := make([]interface{}, len(a))
+			for i, v := range a {
+				if val, err := s.Items.Generic(v); err != nil {
+					return nil, err
+				} else {
+					slice[i] = val
+				}
+			}
+			return slice, nil
+		}
+
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to an array value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this ArraySchema.
@@ -705,8 +1448,21 @@ func (s *ArraySchema) Validate(v reflect.Value) bool {
 	return v.Kind() == reflect.Slice || v.Kind() == reflect.Array
 }
 
+// Canonical representation
+func (s *ArraySchema) Canonical() (*CanonicalSchema, error) {
+	if ic, err := s.Items.Canonical(); err != nil {
+		return nil, err
+	} else {
+		return &CanonicalSchema{Type: "array", Items: ic}, nil
+	}
+}
+
 // MarshalJSON serializes the given schema as JSON.
 func (s *ArraySchema) MarshalJSON() ([]byte, error) {
+	return s.MarshalJSONWithRegistry(make(map[string]Schema))
+}
+
+func (s *ArraySchema) MarshalJSONWithRegistry(registry map[string]Schema) ([]byte, error) {
 	return json.Marshal(struct {
 		Type  string `json:"type,omitempty"`
 		Items Schema `json:"items,omitempty"`
@@ -718,8 +1474,30 @@ func (s *ArraySchema) MarshalJSON() ([]byte, error) {
 
 // MapSchema implements Schema and represents Avro map type.
 type MapSchema struct {
-	Values     Schema
-	Properties map[string]interface{}
+	Values      Schema
+	Properties  map[string]interface{}
+	fingerprint *Fingerprint
+}
+
+// Returns representation considering whether the same type was already declared
+func (s *MapSchema) withRegistry(registry map[string]Schema) Schema {
+	return &MapSchema{
+		Values:      s.Values.withRegistry(registry),
+		Properties:  s.Properties,
+		fingerprint: s.fingerprint,
+	}
+}
+
+// Returns a pre-computed or cached fingerprint
+func (s *MapSchema) Fingerprint() (*Fingerprint, error) {
+	if s.fingerprint == nil {
+		if f, err := calculateSchemaFingerprint(s); err != nil {
+			return nil, err
+		} else {
+			s.fingerprint = f
+		}
+	}
+	return s.fingerprint, nil
 }
 
 // String returns a JSON representation of MapSchema.
@@ -730,6 +1508,39 @@ func (s *MapSchema) String() string {
 	}
 
 	return string(bytes)
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *MapSchema) Generic(datum interface{}) (interface{}, error) {
+	dict := make(map[string]interface{})
+	if stringMap, ok := datum.(map[string]interface{}); ok {
+		for field, v := range stringMap {
+			if val, err := s.Values.Generic(v); err != nil {
+				return nil, err
+			} else {
+				dict[field] = val
+			}
+		}
+	} else if genericMap, ok := datum.(map[interface{}]interface{}); ok {
+		for k, v := range genericMap {
+			field := ""
+			if f, ok := k.(string); ok {
+				field = f
+			} else if f, ok := k.(fmt.Stringer); ok {
+				field = f.String()
+			}
+			if field != "" {
+				if val, err := s.Values.Generic(v); err != nil {
+					return nil, err
+				} else {
+					dict[field] = val
+				}
+			}
+		}
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a map value: %v", datum)
+	}
+	return dict, nil
 }
 
 // Type returns a type constant for this MapSchema.
@@ -759,20 +1570,58 @@ func (s *MapSchema) Validate(v reflect.Value) bool {
 	return v.Kind() == reflect.Map && v.Type().Key().Kind() == reflect.String
 }
 
+// Canonical representation
+func (s *MapSchema) Canonical() (*CanonicalSchema, error) {
+	if vc, err := s.Values.Canonical(); err != nil {
+		return nil, err
+	} else {
+		return &CanonicalSchema{Type: "array", Values: vc}, nil
+	}
+}
+
 // MarshalJSON serializes the given schema as JSON.
 func (s *MapSchema) MarshalJSON() ([]byte, error) {
+	return s.MarshalJSONWithRegistry(make(map[string]Schema))
+}
+
+func (s *MapSchema) MarshalJSONWithRegistry(registry map[string]Schema) ([]byte, error) {
 	return json.Marshal(struct {
 		Type   string `json:"type,omitempty"`
 		Values Schema `json:"values,omitempty"`
 	}{
 		Type:   "map",
-		Values: s.Values,
+		Values: s.Values.withRegistry(registry),
 	})
 }
 
 // UnionSchema implements Schema and represents Avro union type.
 type UnionSchema struct {
-	Types []Schema
+	Types       []Schema
+	fingerprint *Fingerprint
+}
+
+// Returns representation considering whether the same type was already declared
+func (s *UnionSchema) withRegistry(registry map[string]Schema) Schema {
+	types := make([]Schema, len(s.Types))
+	for i, t := range s.Types {
+		types[i] = t.withRegistry(registry)
+	}
+	return &UnionSchema{
+		Types:       types,
+		fingerprint: s.fingerprint,
+	}
+}
+
+// Returns a pre-computed or cached fingerprint
+func (s *UnionSchema) Fingerprint() (*Fingerprint, error) {
+	if s.fingerprint == nil {
+		if f, err := calculateSchemaFingerprint(s); err != nil {
+			return nil, err
+		} else {
+			s.fingerprint = f
+		}
+	}
+	return s.fingerprint, nil
 }
 
 // String returns a JSON representation of UnionSchema.
@@ -783,6 +1632,16 @@ func (s *UnionSchema) String() string {
 	}
 
 	return fmt.Sprintf(`{"type": %s}`, string(bytes))
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *UnionSchema) Generic(datum interface{}) (interface{}, error) {
+	for _, u := range s.Types {
+		if val, err := u.Generic(datum); err == nil {
+			return val, nil
+		}
+	}
+	return nil, fmt.Errorf("don't know how to convert datum to an union value: %v", datum)
 }
 
 // Type returns a type constant for this UnionSchema.
@@ -825,17 +1684,58 @@ func (s *UnionSchema) Validate(v reflect.Value) bool {
 	return false
 }
 
+// Canonical representation
+func (s *UnionSchema) Canonical() (*CanonicalSchema, error) {
+	ct := make([]*CanonicalSchema, len(s.Types))
+	for i, t := range s.Types {
+		if c, err := t.Canonical(); err != nil {
+			return nil, err
+		} else {
+			ct[i] = c
+		}
+	}
+	return &CanonicalSchema{Type: "union", Types: ct}, nil
+}
+
 // MarshalJSON serializes the given schema as JSON.
 func (s *UnionSchema) MarshalJSON() ([]byte, error) {
+	return s.MarshalJSONWithRegistry(make(map[string]Schema))
+}
+
+func (s *UnionSchema) MarshalJSONWithRegistry(registry map[string]Schema) ([]byte, error) {
 	return json.Marshal(s.Types)
 }
 
 // FixedSchema implements Schema and represents Avro fixed type.
 type FixedSchema struct {
-	Namespace  string
-	Name       string
-	Size       int
-	Properties map[string]interface{}
+	Namespace   string                 `json:"namespace"`
+	Name        string                 `json:"name"`
+	Size        int                    `json:"size"`
+	Properties  map[string]interface{} `json:"properties,omitempty"`
+	fingerprint *Fingerprint
+}
+
+// Returns representation considering whether the same type was already declared
+func (s *FixedSchema) withRegistry(registry map[string]Schema) Schema {
+	fullname := GetFullName(s)
+	if schema, ok := registry[fullname]; ok {
+		return &refSchema{Type_: fullname, Ref: schema}
+	} else {
+		registry[fullname] = s
+		return s
+	}
+}
+
+// Returns a pre-computed or cached fingerprint
+func (s *FixedSchema) Fingerprint() (*Fingerprint, error) {
+	if s.fingerprint == nil {
+		if f, err := calculateSchemaFingerprint(s); err != nil {
+			return nil, err
+		} else {
+			s.fingerprint = f
+		}
+	}
+	return s.fingerprint, nil
 }
 
 // String returns a JSON representation of FixedSchema.
@@ -846,6 +1746,17 @@ func (s *FixedSchema) String() string {
 	}
 
 	return string(bytes)
+}
+
+// Converts go runtime datum into a value acceptable by this schema
+func (s *FixedSchema) Generic(datum interface{}) (interface{}, error) {
+	if slice, ok := datum.([]byte); ok && len(slice) == s.Size {
+		return slice, nil
+	} else if plain, ok := datum.(string); ok && len(plain) == s.Size {
+		return []byte(plain), nil
+	} else {
+		return nil, fmt.Errorf("don't know how to convert datum to a fixed value: %v", datum)
+	}
 }
 
 // Type returns a type constant for this FixedSchema.
@@ -875,16 +1786,29 @@ func (s *FixedSchema) Validate(v reflect.Value) bool {
 	return (v.Kind() == reflect.Array || v.Kind() == reflect.Slice) && v.Type().Elem().Kind() == reflect.Uint8 && v.Len() == s.Size
 }
 
+// Canonical representation
+func (s *FixedSchema) Canonical() (*CanonicalSchema, error) {
+	return &CanonicalSchema{
+		Type: "fixed",
+		Name: GetFullName(s),
+		Size: s.Size,
+	}, nil
+}
+
 // MarshalJSON serializes the given schema as JSON.
 func (s *FixedSchema) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Type string `json:"type,omitempty"`
-		Size int    `json:"size,omitempty"`
-		Name string `json:"name,omitempty"`
+		Type       string                 `json:"type,omitempty"`
+		Size       int                    `json:"size,omitempty"`
+		Name       string                 `json:"name,omitempty"`
+		Namespace  string                 `json:"namespace"`
+		Properties map[string]interface{} `json:"properties,omitempty"`
 	}{
-		Type: "fixed",
-		Size: s.Size,
-		Name: s.Name,
+		Type:       "fixed",
+		Size:       s.Size,
+		Name:       s.Name,
+		Namespace:  s.Namespace,
+		Properties: s.Properties,
 	})
 }
 
@@ -1094,6 +2018,11 @@ func parseSchemaField(i interface{}, registry map[string]Schema, namespace strin
 		}
 		schemaField := &SchemaField{Name: name, Properties: getProperties(v)}
 		setOptionalField(&schemaField.Doc, v, schemaDocField)
+		if aliases, ok := v[schemaAliasesField]; ok {
+			for _, a := range aliases.([]interface{}) {
+				schemaField.Aliases = append(schemaField.Aliases, a.(string))
+			}
+		}
 		fieldType, err := schemaByType(v[schemaTypeField], registry, namespace)
 		if err != nil {
 			return nil, err
@@ -1153,6 +2082,55 @@ func getFullName(name string, namespace string) string {
 	return name
 }
 
+type refSchema struct {
+	Type_ string
+	Ref   Schema
+}
+
+// Returns representation considering whether the same type was already declared
+func (s *refSchema) withRegistry(registry map[string]Schema) Schema {
+	return s
+}
+
+// MarshalJSON serializes the given schema as JSON.
+func (s *refSchema) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf("%q", s.Type_)), nil
+}
+
+func (s *refSchema) Type() int {
+	return s.Ref.Type()
+}
+
+func (s *refSchema) GetName() string {
+	return s.Ref.GetName()
+}
+
+func (s *refSchema) Generic(datum interface{}) (interface{}, error) {
+	return s.Ref.Generic(datum)
+}
+
+func (s *refSchema) Prop(key string) (interface{}, bool) {
+	return s.Ref.Prop(key)
+}
+
+func (s *refSchema) Validate(v reflect.Value) (bool) {
+	return s.Ref.Validate(v)
+}
+
+// Canonical Schema
+func (s *refSchema) Canonical() (*CanonicalSchema, error) {
+	return s.Canonical()
+}
+
+// Returns a pre-computed or cached fingerprint
+func (s *refSchema) Fingerprint() (*Fingerprint, error) {
+	return s.Fingerprint()
+}
+
+func (s *refSchema) String() string {
+	return fmt.Sprintf("{%q: %q}", "type", s.Type_)
+}
+
 // gets custom string properties from a given schema
 func getProperties(v map[string]interface{}) map[string]interface{} {
 	props := make(map[string]interface{})
@@ -1180,4 +2158,59 @@ func dereference(v reflect.Value) reflect.Value {
 	}
 
 	return v
+}
+
+func calculateSchemaFingerprint(s Schema) (*Fingerprint, error) {
+	if canonical, err := s.Canonical(); err != nil {
+		return nil, err
+	} else if bytes, err := canonical.MarshalJSON(); err != nil {
+		return nil, err
+	} else {
+		f := Fingerprint(sha256.Sum256(bytes))
+		return &f, nil
+	}
+}
+
+type CanonicalSchema struct {
+	Name    string                  `json:"name,omitempty"`
+	Type    string                  `json:"type,omitempty"`
+	Fields  []*CanonicalSchemaField `json:"fields,omitempty"`
+	Symbols []string                `json:"symbols,omitempty"`
+	Items   *CanonicalSchema        `json:"items,omitempty"`
+	Values  *CanonicalSchema        `json:"values,omitempty"`
+	Size    int                     `json:"size,omitempty"`
+	Types   []*CanonicalSchema      `json:"size,omit"`
+}
+
+type CanonicalSchemaField struct {
+	Name string           `json:"name,omitempty"`
+	Type *CanonicalSchema `json:"type,omitempty"`
+}
+
+func (c *CanonicalSchema) MarshalJSON() ([]byte, error) {
+	switch c.Type {
+	case "string", "bytes", "int", "long", "float", "double", "boolean", "null":
+		return []byte("\"" + c.Type + "\""), nil
+	case "union":
+		return json.Marshal(c.Types)
+	default:
+		return json.Marshal(struct {
+			Name    string                  `json:"name,omitempty"`
+			Type    string                  `json:"type,omitempty"`
+			Fields  []*CanonicalSchemaField `json:"fields,omitempty"`
+			Symbols []string                `json:"symbols,omitempty"`
+			Items   *CanonicalSchema        `json:"items,omitempty"`
+			Values  *CanonicalSchema        `json:"values,omitempty"`
+			Size    int                     `json:"size,omitempty"`
+		}{
+			c.Name,
+			c.Type,
+			c.Fields,
+			c.Symbols,
+			c.Items,
+			c.Values,
+			c.Size,
+		})
+	}
+
 }

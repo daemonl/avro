@@ -3,9 +3,8 @@ package avro_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/amient/avro"
 	"log"
-
-	avro "gopkg.in/avro.v0"
 )
 
 var someSchema avro.Schema

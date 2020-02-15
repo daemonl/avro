@@ -17,15 +17,14 @@ package main
 
 import (
 	"fmt"
-
-	"gopkg.in/avro.v0"
+	"github.com/amient/avro"
 )
 
 // Fields to map should be exported
 type SomeComplexType struct {
 	StringArray []string
 	LongArray   []int64
-	EnumField   *avro.GenericEnum
+	EnumField   *avro.EnumValue
 	MapOfInts   map[string]int32
 	UnionField  string
 	FixedField  []byte

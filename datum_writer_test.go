@@ -93,7 +93,7 @@ func TestSpecificDatumWriterComplex(t *testing.T) {
 	assert(t, decodedComplex.MapOfInts, complex.MapOfInts)
 	assert(t, decodedComplex.UnionField, complex.UnionField)
 	assert(t, decodedComplex.FixedField, complex.FixedField)
-	assert(t, decodedComplex.EnumField, complex.EnumField)
+	assert(t, decodedComplex.EnumField.index, complex.EnumField.index)
 	assert(t, decodedComplex.RecordField.FloatRecordField, complex.RecordField.FloatRecordField)
 	assert(t, decodedComplex.RecordField.IntRecordField, complex.RecordField.IntRecordField)
 	assert(t, decodedComplex.RecordField.LongRecordField, complex.RecordField.LongRecordField)
@@ -324,7 +324,7 @@ func TestGenericDatumWriterFixed(t *testing.T) {
 	rec.Set("fixed", []byte{1, 2, 3, 4}) // 1 byte too short, should error
 	buf, err := testit(rec)
 	assert(t, len(buf), 0)
-	assert(t, err.Error(), "Invalid fixed value: [1 2 3 4]")
+	assert(t, err.Error(), "Invalid fixed value: [1 2 3 4] (GenericDatumWriter)")
 
 	rec = NewGenericRecord(schema)
 	rec.Set("fixed", []byte{1, 2, 3, 4, 5})
@@ -399,7 +399,7 @@ func BenchmarkSpecificDatumWriter(b *testing.B) {
 type _complex struct {
 	StringArray []string
 	LongArray   []int64
-	EnumField   *GenericEnum
+	EnumField   EnumValue
 	MapOfInts   map[string]int32
 	UnionField  interface{}
 	FixedField  []byte
@@ -407,11 +407,17 @@ type _complex struct {
 	MapOfRecord map[string]*_testRecord
 }
 
+var _complexEnum = &EnumSchema{Name: "complexEnum", Symbols: []string{"A", "B", "C", "D"}}
+
 func newComplex() *_complex {
+	val, err := _complexEnum.Value("A")
+	if err != nil {
+		panic(err)
+	}
 	return &_complex{
 		StringArray: make([]string, 0),
 		LongArray:   make([]int64, 0),
-		EnumField:   NewGenericEnum([]string{"A", "B", "C", "D"}),
+		EnumField:   val,
 		MapOfInts:   make(map[string]int32),
 		RecordField: newTestRecord(),
 		MapOfRecord: make(map[string]*_testRecord),
