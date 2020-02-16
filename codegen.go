@@ -209,6 +209,11 @@ func (codegen *CodeGenerator) writeEnum(info *enumSchemaInfo) error {
 		return err
 	}
 
+	err = codegen.writeEnumConstructor(info, buffer)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -235,6 +240,32 @@ func (codegen *CodeGenerator) writeEnumConstants(info *enumSchemaInfo, buffer *b
 	}
 	_, err = buffer.WriteString(")")
 	return err
+}
+
+func (codegen *CodeGenerator) writeEnumConstructor(info *enumSchemaInfo, buffer *bytes.Buffer) error {
+
+	schemaName := fmt.Sprintf("_%s_schema", info.typeName)
+	schemaErrorName := fmt.Sprintf("_%s_schema_error", info.typeName)
+
+	if _, err := buffer.WriteString(fmt.Sprintf(`
+		func New%s(symbol string) (*avro.EnumValue, error) {
+			if err := %s; err != nil {
+				return nil, err
+			}
+			schema := %s.(*avro.EnumSchema)
+			return avro.NewEnumValue(symbol, schema)
+		}
+		`, info.typeName, schemaErrorName, schemaName)); err != nil {
+		return err
+	}
+
+	if _, err := buffer.WriteString(
+		fmt.Sprintf("var %s, %s = avro.ParseSchema(`%s`)\n\n", schemaName, schemaErrorName, strings.Replace(info.schema.String(), "`", "'", -1)),
+	); err != nil {
+		return err
+	}
+	return nil
+
 }
 
 func (codegen *CodeGenerator) writeImportStatement() error {

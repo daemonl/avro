@@ -569,9 +569,8 @@ func TestSchemaConvertGeneric(t *testing.T) {
 		panic(err)
 	}
 
-
 	assert(t, datum2.Option.String(), "C")
-	assert(t, datum2.Option2 == nil , true)
+	assert(t, datum2.Option2 == nil, true)
 	assert(t, datum2.Select.String(), "B")
 	assert(t, datum2.Option3.String(), "A")
 	generic2, ok := generic.(*GenericRecord)

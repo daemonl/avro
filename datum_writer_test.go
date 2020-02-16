@@ -6,7 +6,47 @@ import (
 	"testing"
 )
 
-const primitiveSchemaRaw = `{"type":"record","name":"Primitive","namespace":"example.avro","fields":[{"name":"booleanField","type":"boolean"},{"name":"intField","type":"int"},{"name":"longField","type":"long"},{"name":"floatField","type":"float"},{"name":"doubleField","type":"double"},{"name":"bytesField","type":"bytes"},{"name":"stringField","type":"string"},{"name":"nullField","type":"null"}]}`
+const primitiveSchemaRaw = `
+{
+    "type": "record",
+    "name": "Primitive",
+    "namespace": "example.avro",
+    "fields": [
+        {
+            "name": "booleanField",
+            "type": "boolean"
+        },
+        {
+            "name": "intField",
+            "type": "int"
+        },
+        {
+            "name": "longField",
+            "type": "long"
+        },
+        {
+            "name": "floatField",
+            "type": "float"
+        },
+        {
+            "name": "doubleField",
+            "type": "double"
+        },
+        {
+            "name": "bytesField",
+            "type": "bytes"
+        },
+        {
+            "name": "stringField",
+            "type": "string"
+        },
+        {
+            "name": "nullField",
+            "type": "null"
+        }
+    ]
+}
+`
 
 func TestSpecificDatumWriterPrimitives(t *testing.T) {
 	sch, err := ParseSchema(primitiveSchemaRaw)
@@ -71,6 +111,7 @@ func TestSpecificDatumWriterComplex(t *testing.T) {
 		"foo": &sampleTestRecord,
 		"bar": &sampleTestRecord,
 	}
+	complex.OptionalField = nil
 
 	buffer := &bytes.Buffer{}
 	enc := NewBinaryEncoder(buffer)
@@ -397,14 +438,15 @@ func BenchmarkSpecificDatumWriter(b *testing.B) {
 }
 
 type _complex struct {
-	StringArray []string
-	LongArray   []int64
-	EnumField   EnumValue
-	MapOfInts   map[string]int32
-	UnionField  interface{}
-	FixedField  []byte
-	RecordField *_testRecord
-	MapOfRecord map[string]*_testRecord
+	StringArray   []string
+	LongArray     []int64
+	EnumField     EnumValue
+	MapOfInts     map[string]int32
+	UnionField    interface{}
+	FixedField    []byte
+	RecordField   *_testRecord
+	MapOfRecord   map[string]*_testRecord
+	OptionalField *string // Union of Null and String
 }
 
 var _complexEnum = &EnumSchema{Name: "complexEnum", Symbols: []string{"A", "B", "C", "D"}}
@@ -415,12 +457,13 @@ func newComplex() *_complex {
 		panic(err)
 	}
 	return &_complex{
-		StringArray: make([]string, 0),
-		LongArray:   make([]int64, 0),
-		EnumField:   val,
-		MapOfInts:   make(map[string]int32),
-		RecordField: newTestRecord(),
-		MapOfRecord: make(map[string]*_testRecord),
+		StringArray:   make([]string, 0),
+		LongArray:     make([]int64, 0),
+		EnumField:     val,
+		MapOfInts:     make(map[string]int32),
+		RecordField:   newTestRecord(),
+		MapOfRecord:   make(map[string]*_testRecord),
+		OptionalField: nil,
 	}
 }
 
@@ -544,6 +587,13 @@ var _Complex_schema, _Complex_schema_err = ParseSchema(`{
                "type": "map",
                "values": "TestRecord"
             }
+        },
+        {
+            "name":"optionalField",
+            "type": [
+                "string",
+                "null"
+            ]
         }
     ]
 }`)

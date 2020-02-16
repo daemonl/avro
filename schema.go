@@ -1661,11 +1661,23 @@ func (*UnionSchema) Prop(key string) (interface{}, bool) {
 
 // GetType gets the index of actual union type for a given value.
 func (s *UnionSchema) GetType(v reflect.Value) int {
-	if s.Types != nil {
-		for i := range s.Types {
-			if t := s.Types[i]; t.Validate(v) {
+	if s.Types == nil {
+		return -1
+	}
+
+	if v.IsNil() {
+		for i, t := range s.Types {
+			if _, ok := t.(*NullSchema); ok {
 				return i
 			}
+		}
+
+		return -1
+	}
+
+	for i, t := range s.Types {
+		if t.Validate(v) {
+			return i
 		}
 	}
 
@@ -2113,7 +2125,7 @@ func (s *refSchema) Prop(key string) (interface{}, bool) {
 	return s.Ref.Prop(key)
 }
 
-func (s *refSchema) Validate(v reflect.Value) (bool) {
+func (s *refSchema) Validate(v reflect.Value) bool {
 	return s.Ref.Validate(v)
 }
 
